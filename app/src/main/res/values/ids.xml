@@ -1,0 +1,26 @@
+<resources>
+    <item name="note_title" type="id" />
+    <item name="note_body" type="id" />
+    <item name="book_body" type="id" />
+    <item name="page_animation" type="id" />
+    <item name="section_name" type="id" />
+    <item name="book_details" type="id" />
+    <item name="book_author" type="id" />
+    <item name="book_title" type="id" />
+    <item name="book_country" type="id" />
+    <item name="book_genre" type="id" />
+    <item name="book_started" type="id" />
+    <item name="book_finished" type="id" />
+    <item name="finish_reading" type="id" />
+    <item name="read_book" type="id" />
+    <item name="loading_indicator" type="id" />
+    <item name="loading_label" type="id" />
+    <item name="library_sort" type="id" />
+    <item name="sort_direction" type="id" />
+    <item name="book_cover" type="id" />
+    <item name="change_cover" type="id" />
+    <item name="library_cover" type="id" />
+    <item name="paper_page" type="id" />
+    <item name="paper_total" type="id" />
+    <item name="structure_type" type="id" />
+</resources>

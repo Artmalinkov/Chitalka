@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ru.devimind.chitalka.checks">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+    <application android:label="Проверки Читалки">
+        <provider android:name="ru.devimind.chitalka.checks.CoverImagesProvider" android:authorities="ru.devimind.chitalka.checks.images" android:exported="true" />
+    </application>
+    <instrumentation android:name="ru.devimind.chitalka.checks.ParserChecks" android:targetPackage="ru.devimind.chitalka" />
+    <instrumentation android:name="ru.devimind.chitalka.checks.ReaderChecks" android:targetPackage="ru.devimind.chitalka" />
+    <instrumentation android:name="ru.devimind.chitalka.checks.LegacyBookSeed" android:targetPackage="ru.devimind.chitalka" />
+    <instrumentation android:name="ru.devimind.chitalka.checks.BookChecks" android:targetPackage="ru.devimind.chitalka" />
+    <instrumentation android:name="ru.devimind.chitalka.checks.CoverSeedChecks" android:targetPackage="ru.devimind.chitalka" />
+    <instrumentation android:name="ru.devimind.chitalka.checks.CoverChecks" android:targetPackage="ru.devimind.chitalka" />
+    <instrumentation android:name="ru.devimind.chitalka.checks.PaperChecks" android:targetPackage="ru.devimind.chitalka" />
+</manifest>

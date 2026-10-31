@@ -1,0 +1,26 @@
+# Only source files, build scripts and selected technical documentation.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/app/
+!/tools/
+!/*.cmd
+!/Сборка и проверка.md
+
+# Local machine state, private input and generated output never belong in Git.
+/tools/android-setup-state.json
+**/.local/
+**/.build/
+**/build/
+**/.gradle/
+**/local.properties
+*.iml
+*.apk
+*.aab
+*.keystore
+*.jks
+*.p12
+*.pem
+.env
+.env.*
