@@ -28,4 +28,7 @@
     <item name="pdf_counter" type="id" />
     <item name="pdf_page_number" type="id" />
     <item name="delete_book" type="id" />
+    <item name="reader_controls" type="id" />
+    <item name="pdf_controls" type="id" />
+    <item name="pdf_zoom_controls" type="id" />
 </resources>

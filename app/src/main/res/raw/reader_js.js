@@ -141,6 +141,32 @@
     busy = true; clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () { afterLayout(lastAnchor); }, 100);
   });
+  // Only a short, stationary tap in the centre reveals controls. Keep links,
+  // text selection, long press, scrolling and multi-touch with the reader.
+  var tap = null, lastScroll = 0;
+  window.addEventListener('scroll', function () { lastScroll = Date.now(); }, { passive: true });
+  document.addEventListener('touchstart', function (event) {
+    if (event.touches.length !== 1) { tap = null; return; }
+    var point = event.touches[0];
+    tap = { x: point.clientX, y: point.clientY, time: Date.now(), moved: false,
+      blocked: !window.getSelection().isCollapsed || Date.now() - lastScroll < 150 ||
+        !!event.target.closest('a,button,input,textarea,select') };
+  }, { passive: true });
+  document.addEventListener('touchmove', function (event) {
+    if (!tap || event.touches.length !== 1) { tap = null; return; }
+    var point = event.touches[0];
+    if (Math.hypot(point.clientX - tap.x, point.clientY - tap.y) > 8) tap.moved = true;
+  }, { passive: true });
+  document.addEventListener('touchcancel', function () { tap = null; }, { passive: true });
+  document.addEventListener('touchend', function (event) {
+    var start = tap; tap = null;
+    if (!start || start.blocked || start.moved || event.touches.length ||
+        Date.now() - start.time >= 300 || !window.getSelection().isCollapsed) return;
+    var point = event.changedTouches[0];
+    if (point.clientX > window.innerWidth / 3 && point.clientX < window.innerWidth * 2 / 3 &&
+        point.clientY > window.innerHeight / 3 && point.clientY < window.innerHeight * 2 / 3 &&
+        window.ReaderHost) window.ReaderHost.controls();
+  }, { passive: true });
   function start() {
     layout();
     var anchor;

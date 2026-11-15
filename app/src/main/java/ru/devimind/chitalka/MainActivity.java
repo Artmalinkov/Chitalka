@@ -33,6 +33,7 @@ public final class MainActivity extends Activity {
     private Library.Note editing;private EditText noteTitle,noteBody,structureType;private TextView saveStatus,chapterCount,partLabel;
     private BookDetailsForm detailsForm;private String pendingBookId;private int openToken;private boolean readingStartedMarked;
     private String coverBookId;private PdfReaderView pdfView;
+    private boolean readerActive,readerControlsVisible;private View readerHeader;
     private static final String[] SORT_FIELDS={"opened","author","title","country","genre","started","finished"};
     private static final String[] SORT_LABELS={"Недавно открытые","Автор","Название","Страна автора","Жанр","Дата начала чтения","Дата завершения чтения"};
     private final Runnable saveNoteJob=()->flushNote();
@@ -44,11 +45,19 @@ public final class MainActivity extends Activity {
         d=new Design(this,prefs.getBoolean("light",false));root=new FrameLayout(this);root.setBackgroundColor(d.bg);setContentView(root);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         if(Build.VERSION.SDK_INT>=30){
-            root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets safe=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());v.setPadding(safe.left,safe.top,safe.right,safe.bottom);return insets;});
+            root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets safe=insets.getInsets((readerActive?0:WindowInsets.Type.systemBars())|WindowInsets.Type.displayCutout()|WindowInsets.Type.ime());v.setPadding(safe.left,safe.top,safe.right,safe.bottom);return insets;});
             WindowInsetsController controller=getWindow().getInsetsController();if(controller!=null)controller.setSystemBarsAppearance(d.light?WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS:0,WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
         }else{root.setFitsSystemWindows(true);getWindow().setStatusBarColor(d.bg);getWindow().setNavigationBarColor(d.bg);}
     }
-    private LinearLayout frame(){root.removeAllViews();screen=d.column();screen.setBackgroundColor(d.bg);root.addView(screen,new FrameLayout.LayoutParams(-1,-1));return screen;}
+    private LinearLayout frame(){readerActive=false;readerControlsVisible=false;readerHeader=null;applyReaderWindow();root.removeAllViews();screen=d.column();screen.setBackgroundColor(d.bg);root.addView(screen,new FrameLayout.LayoutParams(-1,-1));return screen;}
+    private void applyReaderWindow(){
+        if(Build.VERSION.SDK_INT>=30){WindowInsetsController controller=getWindow().getInsetsController();if(controller!=null){controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);if(readerActive)controller.hide(WindowInsets.Type.systemBars());else controller.show(WindowInsets.Type.systemBars());}if(root!=null)root.requestApplyInsets();}
+        else{getWindow().getDecorView().setSystemUiVisibility(readerActive?View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION:View.SYSTEM_UI_FLAG_VISIBLE);if(root!=null){root.setFitsSystemWindows(!readerActive);if(readerActive)root.setPadding(0,0,0,0);}}
+    }
+    private void enterReader(FrameLayout stage,View header){readerHeader=header;readerHeader.setId(R.id.reader_controls);readerHeader.setBackgroundColor(d.bg);stage.addView(header,new FrameLayout.LayoutParams(-1,-2,Gravity.TOP));readerActive=true;setReaderControls(false);applyReaderWindow();}
+    private void setReaderControls(boolean visible){readerControlsVisible=readerActive&&visible;if(readerHeader!=null)readerHeader.setVisibility(readerControlsVisible?View.VISIBLE:View.GONE);if(pdfView!=null)pdfView.setControlsVisible(readerControlsVisible);}
+    private void toggleReaderControls(){if(readerActive&&!paneOpen){cancelPageTurn();setReaderControls(!readerControlsVisible);}}
+    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(focused&&readerActive)applyReaderWindow();}
     private void add(LinearLayout into,View child,int width,int height){into.addView(child,new LinearLayout.LayoutParams(width<0?width:d.dp(width),height<0?height:d.dp(height)));}
     private void weighted(LinearLayout into,View view){into.addView(view,new LinearLayout.LayoutParams(0,-2,1));}
     private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
@@ -114,8 +123,8 @@ public final class MainActivity extends Activity {
     private boolean pdf(){Library.BookRow row=bookId==null?null:library.book(bookId);return row!=null&&row.pdf();}
     private void showPdfReader(){
         releaseReader();frame();paneOpen=false;editing=null;Library.BookRow row=library.book(bookId);final String id=bookId;
-        LinearLayout header=d.row();add(header,d.icon("back","О книге",()->showBookDetails(id)),44,52);TextView title=d.title(row.label(),16);title.setSingleLine();title.setEllipsize(TextUtils.TruncateAt.END);weighted(header,title);add(header,d.button("Конспект",true,this::showPane),92,48);add(screen,header,-1,62);
-        pdfView=new PdfReaderView(this,d,library.file(id,".pdf"),Math.max(1,row.page),new PdfReaderView.Listener(){public void page(int page,int count){if(!id.equals(bookId))return;try{library.pdfPosition(id,page,count);library.markReadingStarted(id);}catch(Exception error){fail("Не удалось сохранить страницу PDF",error);}}public void failed(Exception error){if(id.equals(bookId))fail("Не удалось показать PDF",error);}});screen.addView(pdfView,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout header=d.row();add(header,d.icon("back","О книге",()->showBookDetails(id)),44,52);TextView title=d.title(row.label(),16);title.setSingleLine();title.setEllipsize(TextUtils.TruncateAt.END);weighted(header,title);add(header,d.button("Конспект",true,this::showPane),92,48);FrameLayout stage=new FrameLayout(this);screen.addView(stage,new LinearLayout.LayoutParams(-1,-1));
+        pdfView=new PdfReaderView(this,d,library.file(id,".pdf"),Math.max(1,row.page),new PdfReaderView.Listener(){public void page(int page,int count){if(!id.equals(bookId))return;try{library.pdfPosition(id,page,count);library.markReadingStarted(id);}catch(Exception error){fail("Не удалось сохранить страницу PDF",error);}}public void failed(Exception error){if(id.equals(bookId))fail("Не удалось показать PDF",error);}public void controls(){toggleReaderControls();}});stage.addView(pdfView,new FrameLayout.LayoutParams(-1,-1));enterReader(stage,header);
     }
     private void showPaperReader(){
         frame();paneOpen=false;editing=null;library.markReadingStarted(bookId);Library.BookRow row=library.book(bookId);
@@ -144,8 +153,8 @@ public final class MainActivity extends Activity {
         cancelPageTurn();releaseReader();frame();paneOpen=false;editing=null;
         LinearLayout header=d.row();header.setPadding(d.dp(4),d.dp(4),d.dp(8),d.dp(4));add(header,d.icon("back","О книге",()->showBookDetails(bookId)),44,48);
         LinearLayout labels=d.column();TextView title=d.title(book.title,17);title.setMaxLines(1);title.setEllipsize(TextUtils.TruncateAt.END);labels.addView(title);TextView author=d.text(book.author,11,d.muted);author.setSingleLine(true);labels.addView(author);weighted(header,labels);
-        TextView notes=d.button("Конспект",true,this::showPane);notes.setTextSize(12);add(header,notes,92,44);add(screen,header,-1,62);screen.addView(d.divider());
-        LinearLayout meta=d.row();meta.setPadding(d.dp(20),0,d.dp(16),0);partLabel=d.text("",10,d.muted);partLabel.setLetterSpacing(.09f);partLabel.setSingleLine(true);partLabel.setEllipsize(TextUtils.TruncateAt.END);weighted(meta,partLabel);chapterCount=d.text("",11,d.silver);chapterCount.setPadding(d.dp(8),d.dp(8),0,d.dp(8));chapterCount.setOnClickListener(v->outline());meta.addView(chapterCount);add(screen,meta,-1,38);
+        TextView notes=d.button("Конспект",true,this::showPane);notes.setTextSize(12);add(header,notes,92,44);LinearLayout chrome=d.column();add(chrome,header,-1,62);chrome.addView(d.divider());
+        LinearLayout meta=d.row();meta.setPadding(d.dp(20),0,d.dp(16),0);partLabel=d.text("",10,d.muted);partLabel.setLetterSpacing(.09f);partLabel.setSingleLine(true);partLabel.setEllipsize(TextUtils.TruncateAt.END);weighted(meta,partLabel);chapterCount=d.text("",11,d.silver);chapterCount.setPadding(d.dp(8),d.dp(8),0,d.dp(8));chapterCount.setOnClickListener(v->outline());meta.addView(chapterCount);add(chrome,meta,-1,38);
         web=new WebView(this);web.setId(R.id.book_body);web.setBackgroundColor(d.bg);web.setOverScrollMode(View.OVER_SCROLL_NEVER);
         if((getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)WebView.setWebContentsDebuggingEnabled(true);
         WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setBlockNetworkLoads(true);ws.setAllowFileAccess(false);ws.setAllowContentAccess(false);ws.setBuiltInZoomControls(false);ws.setDefaultTextEncodingName("UTF-8");
@@ -169,7 +178,7 @@ public final class MainActivity extends Activity {
             return false;
         });
         readingSurface=new FrameLayout(this);readingSurface.addView(web,new FrameLayout.LayoutParams(-1,-1));
-        screen.addView(readingSurface,new LinearLayout.LayoutParams(-1,0,1));renderChapter();
+        FrameLayout stage=new FrameLayout(this);screen.addView(stage,new LinearLayout.LayoutParams(-1,-1));stage.addView(readingSurface,new FrameLayout.LayoutParams(-1,-1));enterReader(stage,chrome);renderChapter();
     }
     private void releaseReader(){if(pdfView!=null){pdfView.close();pdfView=null;}if(web!=null){WebView old=web;web=null;if(old.getParent() instanceof ViewGroup)((ViewGroup)old.getParent()).removeView(old);old.stopLoading();old.removeJavascriptInterface("ReaderHost");old.destroy();}}
     private Bitmap pageSnapshot(){Bitmap image=Bitmap.createBitmap(web.getWidth(),web.getHeight(),Bitmap.Config.ARGB_8888);Canvas canvas=new Canvas(image);canvas.drawColor(d.bg);web.draw(canvas);return image;}
@@ -214,6 +223,7 @@ public final class MainActivity extends Activity {
             if(current<0||book==null||current>=book.chapters.size()||Double.isNaN(progress)||Double.isInfinite(progress)||anchor==null||anchor.length()>160)return;
             handler.post(()->{if(owner!=web||!id.equals(bookId)||loading)return;chapter=current;fraction=(float)Math.max(0,Math.min(1,progress));readingAnchor=anchor;restoring=false;if(!readingStartedMarked){try{library.markReadingStarted(id);readingStartedMarked=true;}catch(Exception e){android.util.Log.e("Chitalka","Reading start save failed",e);}}updateReaderMeta(page,pages);handler.removeCallbacks(savePositionJob);handler.postDelayed(savePositionJob,400);});
         }
+        @JavascriptInterface public void controls(){handler.post(()->{if(owner==web&&id.equals(bookId))toggleReaderControls();});}
         @JavascriptInterface public void edge(boolean beginning){handler.post(()->{if(owner==web)toast(beginning?"Это начало книги":"Это конец книги");});}
     }
     private void updateReaderMeta(int page,int pages){
@@ -269,7 +279,7 @@ public final class MainActivity extends Activity {
     private void settings(){
         String[] options={"Перелистывание страниц","Анимация перелистывания","Размер текста","Тема приложения","Цитаты","Экспорт конспекта · Markdown","О приложении"};
         new AlertDialog.Builder(dialogContext()).setTitle("Настройки").setItems(options,(dialog,which)->{
-            if(which==0)readingModeDialog();else if(which==1)animationDialog();else if(which==2)fontDialog();else if(which==3)themeDialog();else if(which==4)chooseBookAction(false);else if(which==5)chooseBookAction(true);else new AlertDialog.Builder(dialogContext()).setTitle("Читалка · 0.1.8").setMessage("FB2, PDF и бумажные книги, карточки с обложками, конспекты, герои, цитаты, мысли и разделы. Книгу можно удалить отдельно от конспекта. Книги и записи хранятся на этом устройстве.").setPositiveButton("Понятно",null).show();
+            if(which==0)readingModeDialog();else if(which==1)animationDialog();else if(which==2)fontDialog();else if(which==3)themeDialog();else if(which==4)chooseBookAction(false);else if(which==5)chooseBookAction(true);else new AlertDialog.Builder(dialogContext()).setTitle("Читалка · 0.1.9").setMessage("FB2, PDF и бумажные книги, карточки с обложками, конспекты, герои, цитаты, мысли и разделы. Книгу можно удалить отдельно от конспекта. Книги и записи хранятся на этом устройстве.").setPositiveButton("Понятно",null).show();
         }).show();
     }
     private void readingModeDialog(){
@@ -294,12 +304,12 @@ public final class MainActivity extends Activity {
     private void switchTheme(){flushNote();savePosition();hideKeyboard();boolean reading=bookId!=null;String id=bookId;prefs.edit().putBoolean("light",!d.light).apply();buildRoot();if(reading){bookId=id;showReader();}else showLibrary();}
 
     private void showPane(){
-        if(book==null)return;if(archived()){if(paneOpen)showNoteList();else showSavedNotebook();return;}cancelPageTurn();if(paneOpen){showNoteList();return;}paneOpen=true;
+        if(book==null)return;if(readerActive)setReaderControls(false);if(archived()){if(paneOpen)showNoteList();else showSavedNotebook();return;}cancelPageTurn();if(paneOpen){showNoteList();return;}paneOpen=true;
         paneLayer=new FrameLayout(this);root.addView(paneLayer,new FrameLayout.LayoutParams(-1,-1));View shade=new View(this);shade.setBackgroundColor(0x88000000);shade.setOnClickListener(v->closePane());paneLayer.addView(shade,new FrameLayout.LayoutParams(-1,-1));
         pane=d.column();pane.setPadding(d.dp(16),0,d.dp(16),d.dp(12));pane.setBackgroundColor(d.panel);pane.setElevation(d.dp(12));pane.setClickable(true);FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(paneWidth(),-1,Gravity.END);paneLayer.addView(pane,lp);showNoteList();
     }
     private int paneWidth(){return Math.min(d.dp(560),(int)(getResources().getDisplayMetrics().widthPixels*.9f));}
-    private void closePane(){if(archived()){showLibrary();return;}flushNote();hideKeyboard();if(paneLayer!=null)root.removeView(paneLayer);paneOpen=false;editing=null;}
+    private void closePane(){if(archived()){showLibrary();return;}flushNote();hideKeyboard();if(paneLayer!=null)root.removeView(paneLayer);paneOpen=false;editing=null;if(readerActive)setReaderControls(false);}
     private LinearLayout paneHeader(String title,Runnable back){LinearLayout row=d.row();TextView label=d.title(title,23);weighted(row,label);add(row,d.icon(back==null?"close":"back",back==null?"Закрыть конспект":"Назад к записям",back==null?this::closePane:back),44,52);add(pane,row,-1,64);return row;}
     private void showNoteList(){
         flushNote();editing=null;if(pane==null)return;pane.removeAllViews();paneHeader("Конспект",null);TextView sub=d.text(book.title,12,d.muted);sub.setMaxLines(2);pane.addView(sub);d.gap(pane,16);
@@ -351,5 +361,5 @@ public final class MainActivity extends Activity {
     @Override protected void onDestroy(){cancelPageTurn();releaseReader();worker.shutdownNow();super.onDestroy();}
     @Override protected void onSaveInstanceState(Bundle state){flushNote();if(detailsForm!=null){detailsForm.save();state.putString("details",detailsForm.book.id);}savePosition();state.putString("cover_book",coverBookId);state.putString("book",bookId!=null?bookId:pendingBookId);state.putBoolean("pane",paneOpen);state.putInt("tab",tab);if(editing!=null)state.putString("editing",editing.id);super.onSaveInstanceState(state);}
     @Override public void onConfigurationChanged(Configuration config){cancelPageTurn();super.onConfigurationChanged(config);if(pane!=null&&paneOpen&&!archived()){FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)pane.getLayoutParams();lp.width=paneWidth();pane.setLayoutParams(lp);}}
-    @Override public void onBackPressed(){if(paneOpen){closePane();return;}if(bookId!=null&&!loading){if(archived())showLibrary();else showBookDetails(bookId);return;}if(pendingBookId!=null){showBookDetails(pendingBookId);return;}if(detailsForm!=null){showLibrary();return;}if(loading){showLibrary();return;}super.onBackPressed();}
+    @Override public void onBackPressed(){if(paneOpen){closePane();return;}if(readerActive&&readerControlsVisible){setReaderControls(false);return;}if(bookId!=null&&!loading){if(archived())showLibrary();else showBookDetails(bookId);return;}if(pendingBookId!=null){showBookDetails(pendingBookId);return;}if(detailsForm!=null){showLibrary();return;}if(loading){showLibrary();return;}super.onBackPressed();}
 }
