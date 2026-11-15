@@ -23,9 +23,9 @@ final class BookDetailsForm extends LinearLayout {
     final ImageView cover;private final TextView changeCover;
     private boolean dirty;
 
-    BookDetailsForm(Activity activity,Design design,Library library,Library.BookRow book,Runnable back,Runnable read,Runnable chooseCover){
+    BookDetailsForm(Activity activity,Design design,Library library,Library.BookRow book,Runnable back,Runnable read,Runnable chooseCover,Runnable delete){
         super(activity);this.d=design;this.library=library;this.book=book;setOrientation(VERTICAL);setId(R.id.book_details);
-        LinearLayout header=d.row();header.setPadding(d.dp(4),d.dp(4),d.dp(16),d.dp(4));header.addView(d.icon("back","В библиотеку",()->{if(save())back.run();}),new LayoutParams(d.dp(44),d.dp(48)));header.addView(d.title("О книге",23));addView(header,new LayoutParams(-1,d.dp(64)));addView(d.divider());
+        LinearLayout header=d.row();header.setPadding(d.dp(4),d.dp(4),d.dp(16),d.dp(4));header.addView(d.icon("back","В библиотеку",()->{if(save())back.run();}),new LayoutParams(d.dp(44),d.dp(48)));header.addView(d.title("О книге",23),new LayoutParams(0,-2,1));View remove=d.icon("trash","Удалить книгу",()->{if(save())delete.run();});remove.setId(R.id.delete_book);header.addView(remove,new LayoutParams(d.dp(44),d.dp(48)));addView(header,new LayoutParams(-1,d.dp(64)));addView(d.divider());
         ScrollView scroll=new ScrollView(activity);scroll.setFillViewport(true);addView(scroll,new LayoutParams(-1,0,1));LinearLayout fields=d.column();fields.setPadding(d.dp(20),d.dp(20),d.dp(20),d.dp(20));scroll.addView(fields);
         cover=new ImageView(activity);cover.setId(R.id.book_cover);cover.setContentDescription("Обложка книги. Выбрать изображение");cover.setImageResource(R.drawable.ic_launcher);cover.setScaleType(ImageView.ScaleType.FIT_CENTER);cover.setPadding(d.dp(8),d.dp(8),d.dp(8),d.dp(8));cover.setBackground(d.surface(d.field));cover.setOnClickListener(v->chooseCover.run());cover.setFocusable(true);fields.addView(cover,new LayoutParams(-1,d.dp(220)));d.gap(fields,10);
         changeCover=d.button("Изменить обложку",false,chooseCover);changeCover.setId(R.id.change_cover);fields.addView(changeCover,new LayoutParams(-1,d.dp(48)));d.gap(fields,20);

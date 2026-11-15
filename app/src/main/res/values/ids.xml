@@ -23,4 +23,9 @@
     <item name="paper_page" type="id" />
     <item name="paper_total" type="id" />
     <item name="structure_type" type="id" />
+    <item name="pdf_reader" type="id" />
+    <item name="pdf_page" type="id" />
+    <item name="pdf_counter" type="id" />
+    <item name="pdf_page_number" type="id" />
+    <item name="delete_book" type="id" />
 </resources>

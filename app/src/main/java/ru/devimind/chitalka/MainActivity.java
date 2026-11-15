@@ -32,7 +32,7 @@ public final class MainActivity extends Activity {
     private Bitmap turnPrevious,turnNext;private boolean preparingTurn;private int turnToken;
     private Library.Note editing;private EditText noteTitle,noteBody,structureType;private TextView saveStatus,chapterCount,partLabel;
     private BookDetailsForm detailsForm;private String pendingBookId;private int openToken;private boolean readingStartedMarked;
-    private String coverBookId;
+    private String coverBookId;private PdfReaderView pdfView;
     private static final String[] SORT_FIELDS={"opened","author","title","country","genre","started","finished"};
     private static final String[] SORT_LABELS={"Недавно открытые","Автор","Название","Страна автора","Жанр","Дата начала чтения","Дата завершения чтения"};
     private final Runnable saveNoteJob=()->flushNote();
@@ -73,7 +73,7 @@ public final class MainActivity extends Activity {
         if(books.isEmpty()){
             LinearLayout empty=d.column();empty.setPadding(d.dp(22),d.dp(28),d.dp(22),d.dp(26));empty.setBackground(d.surface(d.panel));
             View mark=d.icon("book","Книга",()->{});add(empty,mark,56,56);d.gap(empty,18);empty.addView(d.title("Начните с одной книги",23));d.gap(empty,12);
-            TextView help=d.text("Добавьте файл FB2 или бумажную книгу и собирайте собственный конспект.",16,d.muted);help.setLineSpacing(d.dp(4),1);empty.addView(help);d.gap(empty,22);add(empty,d.button("Добавить книгу",true,this::addBookDialog),-1,52);content.addView(empty);
+            TextView help=d.text("Добавьте файл FB2, PDF или бумажную книгу и собирайте собственный конспект.",16,d.muted);help.setLineSpacing(d.dp(4),1);empty.addView(help);d.gap(empty,22);add(empty,d.button("Добавить книгу",true,this::addBookDialog),-1,52);content.addView(empty);
         }else{
             for(Library.BookRow row:books){
                 LinearLayout card=d.row();card.setPadding(d.dp(14),d.dp(16),d.dp(14),d.dp(16));card.setBackground(d.surface(d.panel));
@@ -85,19 +85,38 @@ public final class MainActivity extends Activity {
             }
             d.gap(content,8);add(content,d.button("+  Добавить книгу",true,this::addBookDialog),-1,52);
         }
+        if(!library.savedNotebooks().isEmpty()){d.gap(content,18);add(content,d.button("Сохранённые конспекты",false,this::chooseSavedNotebook),-1,52);}
         TextView local=d.text("Локально · ваши книги и записи",12,d.muted);local.setPadding(d.dp(20),d.dp(14),d.dp(20),d.dp(16));screen.addView(local);
     }
     private void sortDialog(){String current=prefs.getString("library_sort","opened");int selected=0;for(int i=0;i<SORT_FIELDS.length;i++)if(SORT_FIELDS[i].equals(current))selected=i;new AlertDialog.Builder(dialogContext()).setTitle("Сортировка библиотеки").setSingleChoiceItems(SORT_LABELS,selected,(dialog,which)->{prefs.edit().putString("library_sort",SORT_FIELDS[which]).putBoolean("library_desc",which==0||which>=5).apply();dialog.dismiss();showLibrary();}).setNegativeButton("Отмена",null).show();}
     private void showBookDetails(String id){
         if(detailsForm!=null&&!detailsForm.save())return;detailsForm=null;openToken++;pendingBookId=null;
         cancelPageTurn();flushNote();savePosition();releaseReader();bookId=null;loading=false;paneOpen=false;editing=null;hideKeyboard();frame();
-        Library.BookRow row=library.book(id);if(row==null){showLibrary();return;}
-        detailsForm=new BookDetailsForm(this,d,library,row,this::showLibrary,()->{hideKeyboard();openBook(id,null);},this::pickCover);screen.addView(detailsForm,new LinearLayout.LayoutParams(-1,-1));loadCover(id,detailsForm.cover,1280);
+        Library.BookRow row=library.book(id);if(row==null){showLibrary();return;}if(row.archived){openBook(id,null);return;}
+        detailsForm=new BookDetailsForm(this,d,library,row,this::showLibrary,()->{hideKeyboard();openBook(id,null);},this::pickCover,()->confirmDeleteBook(id));screen.addView(detailsForm,new LinearLayout.LayoutParams(-1,-1));loadCover(id,detailsForm.cover,1280);
+    }
+    private boolean archived(){Library.BookRow row=bookId==null?null:library.book(bookId);return row!=null&&row.archived;}
+    private void chooseSavedNotebook(){List<Library.BookRow> rows=library.savedNotebooks();String[] titles=new String[rows.size()];for(int i=0;i<titles.length;i++)titles[i]=rows.get(i).label()+"\n"+rows.get(i).author;new AlertDialog.Builder(dialogContext()).setTitle("Сохранённые конспекты").setItems(titles,(dialog,index)->openBook(rows.get(index).id,null)).setNegativeButton("Отмена",null).show();}
+    private void confirmDeleteBook(String id){Library.BookRow row=library.book(id);if(row==null)return;hideKeyboard();new AlertDialog.Builder(dialogContext()).setTitle("Удалить книгу?").setMessage("«"+row.label()+"»\n\nУдалить вместе с конспектом? Если сохранить конспект, он останется доступен в библиотеке. Исходный файл на телефоне останется.").setPositiveButton("Удалить вместе с конспектом",(a,b)->removeBook(id,true)).setNeutralButton("Сохранить конспект",(a,b)->removeBook(id,false)).setNegativeButton("Отмена",null).show();}
+    private void removeBook(String id,boolean withNotebook){
+        if(detailsForm!=null&&!detailsForm.save())return;detailsForm=null;flushNote();cancelPageTurn();releaseReader();openToken++;pendingBookId=null;bookId=null;editing=null;paneOpen=false;hideKeyboard();busy("Удаляем книгу…");
+        BookCovers.WORKER.execute(()->{Exception failure=null;try{library.deleteBook(id,withNotebook);if(withNotebook)prefs.edit().remove("anchor_"+id).apply();}catch(Exception error){failure=error;}final Exception error=failure;handler.post(()->{if(isDestroyed()||isFinishing())return;showLibrary();if(error!=null)fail("Не удалось завершить удаление",error);else toast(withNotebook?"Книга и конспект удалены":"Книга удалена. Конспект сохранён.");});});
+    }
+    private void showSavedNotebook(){
+        releaseReader();frame();paneOpen=false;editing=null;paneLayer=null;
+        LinearLayout header=d.row();add(header,d.icon("back","В библиотеку",this::showLibrary),44,52);weighted(header,d.title("Сохранённый конспект",18));add(header,d.button("Экспорт",false,()->{flushNote();exportBook(bookId);}),80,48);add(header,d.icon("trash","Удалить конспект",()->new AlertDialog.Builder(dialogContext()).setTitle("Удалить конспект?").setMessage("«"+book.title+"». Все записи будут удалены без возможности восстановления.").setPositiveButton("Удалить",(a,b)->removeBook(bookId,true)).setNegativeButton("Отмена",null).show()),44,48);add(screen,header,-1,64);
+        pane=d.column();pane.setPadding(d.dp(16),0,d.dp(16),d.dp(12));screen.addView(pane,new LinearLayout.LayoutParams(-1,0,1));paneOpen=true;showNoteList();
     }
     private void loadCover(String id,ImageView image,int edge){BookCovers.WORKER.execute(()->{try{Bitmap bitmap=library.cover(id,edge);handler.post(()->{if(bitmap==null)return;if(isDestroyed()||!image.isAttachedToWindow()){bitmap.recycle();return;}image.setImageBitmap(bitmap);});}catch(Exception|OutOfMemoryError error){android.util.Log.e("Chitalka","Cover load failed",error);}});}
     private void pickCover(){if(detailsForm==null||!detailsForm.save())return;hideKeyboard();coverBookId=detailsForm.book.id;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE);try{startActivityForResult(intent,COVER_IMAGE);}catch(ActivityNotFoundException error){coverBookId=null;fail("Не удалось открыть выбор изображения",error);}}
     private boolean paper(){Library.BookRow row=bookId==null?null:library.book(bookId);return row!=null&&row.paper();}
-    private void addBookDialog(){new AlertDialog.Builder(dialogContext()).setTitle("Добавить книгу").setItems(new String[]{"Электронная · файл FB2","Бумажная книга"},(dialog,which)->{if(which==0)pickBook();else showBookDetails(library.addPaper());}).setNegativeButton("Отмена",null).show();}
+    private void addBookDialog(){new AlertDialog.Builder(dialogContext()).setTitle("Добавить книгу").setItems(new String[]{"Электронная · файл FB2","PDF-книга","Бумажная книга"},(dialog,which)->{if(which==0)pickBook();else if(which==1)startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("application/pdf").addCategory(Intent.CATEGORY_OPENABLE),IMPORT);else showBookDetails(library.addPaper());}).setNegativeButton("Отмена",null).show();}
+    private boolean pdf(){Library.BookRow row=bookId==null?null:library.book(bookId);return row!=null&&row.pdf();}
+    private void showPdfReader(){
+        releaseReader();frame();paneOpen=false;editing=null;Library.BookRow row=library.book(bookId);final String id=bookId;
+        LinearLayout header=d.row();add(header,d.icon("back","О книге",()->showBookDetails(id)),44,52);TextView title=d.title(row.label(),16);title.setSingleLine();title.setEllipsize(TextUtils.TruncateAt.END);weighted(header,title);add(header,d.button("Конспект",true,this::showPane),92,48);add(screen,header,-1,62);
+        pdfView=new PdfReaderView(this,d,library.file(id,".pdf"),Math.max(1,row.page),new PdfReaderView.Listener(){public void page(int page,int count){if(!id.equals(bookId))return;try{library.pdfPosition(id,page,count);library.markReadingStarted(id);}catch(Exception error){fail("Не удалось сохранить страницу PDF",error);}}public void failed(Exception error){if(id.equals(bookId))fail("Не удалось показать PDF",error);}});screen.addView(pdfView,new LinearLayout.LayoutParams(-1,0,1));
+    }
     private void showPaperReader(){
         frame();paneOpen=false;editing=null;library.markReadingStarted(bookId);Library.BookRow row=library.book(bookId);
         LinearLayout header=d.row();add(header,d.icon("back","О книге",()->showBookDetails(bookId)),44,52);weighted(header,d.title(row.label(),20));add(screen,header,-1,64);
@@ -119,6 +138,8 @@ public final class MainActivity extends Activity {
         if(request==EXPORT){try(OutputStream out=getContentResolver().openOutputStream(data.getData())){if(out==null)throw new IOException("Не удалось сохранить файл");out.write(exportText.getBytes(java.nio.charset.StandardCharsets.UTF_8));toast("Конспект сохранён в Markdown");}catch(Exception e){fail("Экспорт не завершён",e);}}
     }
     private void showReader(){
+        if(archived()){showSavedNotebook();return;}
+        if(pdf()){showPdfReader();return;}
         if(paper()){releaseReader();showPaperReader();return;}
         cancelPageTurn();releaseReader();frame();paneOpen=false;editing=null;
         LinearLayout header=d.row();header.setPadding(d.dp(4),d.dp(4),d.dp(8),d.dp(4));add(header,d.icon("back","О книге",()->showBookDetails(bookId)),44,48);
@@ -150,7 +171,7 @@ public final class MainActivity extends Activity {
         readingSurface=new FrameLayout(this);readingSurface.addView(web,new FrameLayout.LayoutParams(-1,-1));
         screen.addView(readingSurface,new LinearLayout.LayoutParams(-1,0,1));renderChapter();
     }
-    private void releaseReader(){if(web!=null){WebView old=web;web=null;if(old.getParent() instanceof ViewGroup)((ViewGroup)old.getParent()).removeView(old);old.stopLoading();old.removeJavascriptInterface("ReaderHost");old.destroy();}}
+    private void releaseReader(){if(pdfView!=null){pdfView.close();pdfView=null;}if(web!=null){WebView old=web;web=null;if(old.getParent() instanceof ViewGroup)((ViewGroup)old.getParent()).removeView(old);old.stopLoading();old.removeJavascriptInterface("ReaderHost");old.destroy();}}
     private Bitmap pageSnapshot(){Bitmap image=Bitmap.createBitmap(web.getWidth(),web.getHeight(),Bitmap.Config.ARGB_8888);Canvas canvas=new Canvas(image);canvas.drawColor(d.bg);web.draw(canvas);return image;}
     private void cancelPageTurn(){
         turnToken++;if(pageAnimator!=null){pageAnimator.cancel();pageAnimator=null;}
@@ -233,7 +254,7 @@ public final class MainActivity extends Activity {
         if(restoring)return;savePosition();chapter=index;fraction=0;readingAnchor="{\"c\":"+index+",\"b\":0,\"o\":0}";savePosition();
         web.evaluateJavascript("if(window.Reader)Reader.jump("+index+")",null);
     }
-    private void savePosition(){handler.removeCallbacks(savePositionJob);if(bookId!=null&&book!=null&&!loading&&!restoring&&!paper()){try{library.position(bookId,chapter,fraction);prefs.edit().putString("anchor_"+bookId,readingAnchor).apply();}catch(Exception e){android.util.Log.e("Chitalka","Position save failed",e);}}}
+    private void savePosition(){handler.removeCallbacks(savePositionJob);if(bookId!=null&&book!=null&&!loading&&!restoring&&!paper()&&!pdf()&&!archived()){try{library.position(bookId,chapter,fraction);prefs.edit().putString("anchor_"+bookId,readingAnchor).apply();}catch(Exception e){android.util.Log.e("Chitalka","Position save failed",e);}}}
     private void outline(){tab=4;showPane();}
     private void showBookStructure(){
         EditText search=d.edit("Найти главу",1);search.setSingleLine();add(pane,search,-1,48);d.gap(pane,8);
@@ -248,7 +269,7 @@ public final class MainActivity extends Activity {
     private void settings(){
         String[] options={"Перелистывание страниц","Анимация перелистывания","Размер текста","Тема приложения","Цитаты","Экспорт конспекта · Markdown","О приложении"};
         new AlertDialog.Builder(dialogContext()).setTitle("Настройки").setItems(options,(dialog,which)->{
-            if(which==0)readingModeDialog();else if(which==1)animationDialog();else if(which==2)fontDialog();else if(which==3)themeDialog();else if(which==4)chooseBookAction(false);else if(which==5)chooseBookAction(true);else new AlertDialog.Builder(dialogContext()).setTitle("Читалка · 0.1.7").setMessage("Карточка книги с обложкой, сортировка библиотеки, два режима чтения, анимации страниц, герои, цитаты, мысли и разделы. Книги и записи хранятся на этом устройстве.").setPositiveButton("Понятно",null).show();
+            if(which==0)readingModeDialog();else if(which==1)animationDialog();else if(which==2)fontDialog();else if(which==3)themeDialog();else if(which==4)chooseBookAction(false);else if(which==5)chooseBookAction(true);else new AlertDialog.Builder(dialogContext()).setTitle("Читалка · 0.1.8").setMessage("FB2, PDF и бумажные книги, карточки с обложками, конспекты, герои, цитаты, мысли и разделы. Книгу можно удалить отдельно от конспекта. Книги и записи хранятся на этом устройстве.").setPositiveButton("Понятно",null).show();
         }).show();
     }
     private void readingModeDialog(){
@@ -265,7 +286,7 @@ public final class MainActivity extends Activity {
     }
     private void themeDialog(){new AlertDialog.Builder(dialogContext()).setTitle("Тема приложения").setSingleChoiceItems(new String[]{"Светлая","Тёмная"},d.light?0:1,(dialog,which)->{dialog.dismiss();if((which==0)!=d.light)switchTheme();}).setNegativeButton("Отмена",null).show();}
     private void chooseBookAction(boolean exporting){
-        List<Library.BookRow> books=library.books();if(books.isEmpty()){toast("Сначала добавьте книгу в библиотеку");return;}
+        List<Library.BookRow> books=library.books();books.addAll(library.savedNotebooks());if(books.isEmpty()){toast("Сначала добавьте книгу в библиотеку");return;}
         String[] names=new String[books.size()];for(int i=0;i<names.length;i++)names[i]=books.get(i).title+"\n"+books.get(i).author;
         new AlertDialog.Builder(dialogContext()).setTitle(exporting?"Конспект какой книги сохранить?":"Цитаты какой книги открыть?").setItems(names,(dialog,index)->{String id=books.get(index).id;if(exporting)exportBook(id);else openBook(id,()->{tab=2;showPane();});}).setNegativeButton("Отмена",null).show();
     }
@@ -273,20 +294,20 @@ public final class MainActivity extends Activity {
     private void switchTheme(){flushNote();savePosition();hideKeyboard();boolean reading=bookId!=null;String id=bookId;prefs.edit().putBoolean("light",!d.light).apply();buildRoot();if(reading){bookId=id;showReader();}else showLibrary();}
 
     private void showPane(){
-        if(book==null)return;cancelPageTurn();if(paneOpen){showNoteList();return;}paneOpen=true;
+        if(book==null)return;if(archived()){if(paneOpen)showNoteList();else showSavedNotebook();return;}cancelPageTurn();if(paneOpen){showNoteList();return;}paneOpen=true;
         paneLayer=new FrameLayout(this);root.addView(paneLayer,new FrameLayout.LayoutParams(-1,-1));View shade=new View(this);shade.setBackgroundColor(0x88000000);shade.setOnClickListener(v->closePane());paneLayer.addView(shade,new FrameLayout.LayoutParams(-1,-1));
         pane=d.column();pane.setPadding(d.dp(16),0,d.dp(16),d.dp(12));pane.setBackgroundColor(d.panel);pane.setElevation(d.dp(12));pane.setClickable(true);FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(paneWidth(),-1,Gravity.END);paneLayer.addView(pane,lp);showNoteList();
     }
     private int paneWidth(){return Math.min(d.dp(560),(int)(getResources().getDisplayMetrics().widthPixels*.9f));}
-    private void closePane(){flushNote();hideKeyboard();if(paneLayer!=null)root.removeView(paneLayer);paneOpen=false;editing=null;}
+    private void closePane(){if(archived()){showLibrary();return;}flushNote();hideKeyboard();if(paneLayer!=null)root.removeView(paneLayer);paneOpen=false;editing=null;}
     private LinearLayout paneHeader(String title,Runnable back){LinearLayout row=d.row();TextView label=d.title(title,23);weighted(row,label);add(row,d.icon(back==null?"close":"back",back==null?"Закрыть конспект":"Назад к записям",back==null?this::closePane:back),44,52);add(pane,row,-1,64);return row;}
     private void showNoteList(){
         flushNote();editing=null;if(pane==null)return;pane.removeAllViews();paneHeader("Конспект",null);TextView sub=d.text(book.title,12,d.muted);sub.setMaxLines(2);pane.addView(sub);d.gap(pane,16);
         String[] names={"Записи","Герои","Цитаты","Мои мысли","Структура"};int[][] rows={{4,0,1},{2,3}};
         for(int[] row:rows){LinearLayout tabs=d.row();for(int t:row){TextView b=d.text(names[t],13,tab==t?d.text:d.muted);b.setContentDescription(names[t]);b.setGravity(Gravity.CENTER);b.setPadding(d.dp(4),d.dp(8),d.dp(4),d.dp(8));if(tab==t)b.setBackground(d.surface(d.field));b.setOnClickListener(v->{tab=t;hideKeyboard();showNoteList();});tabs.addView(b,new LinearLayout.LayoutParams(0,d.dp(44),1));}pane.addView(tabs);d.gap(pane,4);}d.gap(pane,10);
-        if(tab==4&&!paper()){showBookStructure();return;}
+        if(tab==4&&!paper()&&!pdf()&&!archived()){showBookStructure();return;}
         add(pane,d.button(tab==3?"+  Моя мысль":"+  Добавить",true,this::addNoteDialog),-1,46);d.gap(pane,10);
-        if(tab==2&&!paper()){add(pane,d.button("Цитата из выделенного текста",false,this::quote),-1,44);d.gap(pane,10);}
+        if(tab==2&&!paper()&&!pdf()&&!archived()){add(pane,d.button("Цитата из выделенного текста",false,this::quote),-1,44);d.gap(pane,10);}
         ScrollView scroll=new ScrollView(this);pane.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));LinearLayout entries=d.column();scroll.addView(entries);List<Library.Note> all=library.orderedNotes(bookId);int visible=0;
         for(Library.Note n:all){if(tab==1&&!n.type.equals("hero")||tab==2&&!n.type.equals("quote")||tab==3&&!n.type.equals("thought")||(tab==0||tab==4)&&!(n.type.equals("part")||n.type.equals("chapter")||n.type.equals("section")))continue;visible++;
             LinearLayout card=d.column();card.setPadding(d.dp(12),d.dp(12),d.dp(12),d.dp(12));card.setBackground(d.surface(d.field));card.addView(d.text((n.structureType.isEmpty()?Library.typeLabel(n.type):n.structureType).toUpperCase(new Locale("ru")),9,d.silver));d.gap(card,6);card.addView(d.title(n.label(),16));if(!n.body.trim().isEmpty()){d.gap(card,6);TextView excerpt=d.text(n.body,13,d.muted);excerpt.setMaxLines(3);excerpt.setEllipsize(TextUtils.TruncateAt.END);card.addView(excerpt);}
@@ -296,15 +317,15 @@ public final class MainActivity extends Activity {
         if(visible==0){d.gap(entries,20);TextView empty=d.text(tab==1?"Сохраните имя героя и собственное описание.":tab==2?"Добавляйте цитаты во время чтения.":tab==3?"Записывайте собственные мысли, вопросы и выводы.":"Добавляйте свои части и главы конспекта по мере чтения.",15,d.muted);empty.setLineSpacing(d.dp(4),1);entries.addView(empty);}
         d.gap(pane,8);pane.addView(d.text("Записи сохраняются автоматически",11,d.muted));
     }
-    private void addNoteDialog(){if(paper()&&(tab==0||tab==4)){createNote("section","");return;}if(tab==3){createNote("thought","");return;}String[] types=tab==1?new String[]{"hero"}:tab==2?new String[]{"quote"}:new String[]{"part","chapter","section"};String[] labels=new String[types.length];for(int i=0;i<types.length;i++)labels[i]=Library.typeLabel(types[i]);new AlertDialog.Builder(dialogContext()).setTitle("Добавить в конспект").setItems(labels,(a,index)->createNote(types[index],"")).show();}
-    private void createNote(String type,String text){try{Library.Note n=library.add(bookId,type,type.equals("hero")||type.equals("part")||type.equals("section")?-1:paper()?library.book(bookId).page:chapter,text);tab=type.equals("hero")?1:type.equals("quote")?2:type.equals("thought")?3:0;if(!paneOpen)showPane();openEditor(n);}catch(Exception e){fail("Не удалось создать запись",e);}}
+    private void addNoteDialog(){if((paper()||pdf()||archived())&&(tab==0||tab==4)){createNote("section","");return;}if(tab==3){createNote("thought","");return;}String[] types=tab==1?new String[]{"hero"}:tab==2?new String[]{"quote"}:new String[]{"part","chapter","section"};String[] labels=new String[types.length];for(int i=0;i<types.length;i++)labels[i]=Library.typeLabel(types[i]);new AlertDialog.Builder(dialogContext()).setTitle("Добавить в конспект").setItems(labels,(a,index)->createNote(types[index],"")).show();}
+    private void createNote(String type,String text){try{Library.Note n=library.add(bookId,type,archived()?-1:type.equals("hero")||type.equals("part")||type.equals("section")?-1:(paper()||pdf())?library.book(bookId).page:chapter,text);tab=type.equals("hero")?1:type.equals("quote")?2:type.equals("thought")?3:0;if(!paneOpen)showPane();openEditor(n);}catch(Exception e){fail("Не удалось создать запись",e);}}
     private void openEditor(Library.Note n){
         if(n==null)return;flushNote();editing=n;dirty=false;pane.removeAllViews();paneHeader(Library.typeLabel(n.type),this::showNoteList);
         saveStatus=d.text("Сохранено на устройстве",11,d.muted);pane.addView(saveStatus);d.gap(pane,12);
         structureType=null;if(n.type.equals("section")||n.type.equals("part")||n.type.equals("chapter")){pane.addView(d.text("Структурный тип",12,d.muted));structureType=d.edit("Часть, раздел, глава или свой тип",1);structureType.setId(R.id.structure_type);structureType.setSingleLine();structureType.setText(n.structureType.isEmpty()?Library.typeLabel(n.type):n.structureType);add(pane,structureType,-1,52);d.gap(pane,8);}
         noteTitle=d.edit(n.type.equals("hero")?"Имя героя":n.type.equals("section")?"Наименование, включая нумерацию":"Название",1);noteTitle.setId(R.id.note_title);noteTitle.setMaxLines(2);noteTitle.setText(n.title);add(pane,noteTitle,-1,58);d.gap(pane,10);
         if(!n.type.equals("hero")){Library.Note parent=n.parent==null?null:library.note(n.parent);TextView hierarchy=d.button(parent==null?"Раздел: общие записи":"Раздел: "+parent.label(),false,this::chooseParent);hierarchy.setMaxLines(1);hierarchy.setEllipsize(TextUtils.TruncateAt.END);add(pane,hierarchy,-1,42);d.gap(pane,8);}
-        LinearLayout sourceRow=d.row();boolean linked=!paper()&&n.source>=0&&n.source<book.chapters.size();TextView source=d.text(linked?"Источник: "+book.chapters.get(n.source).title:paper()&&n.source>0?"Источник: страница "+n.source:"Источник: вся книга",11,d.silver);source.setMaxLines(2);source.setEllipsize(TextUtils.TruncateAt.END);if(linked)source.setOnClickListener(v->{int target=editing.source;closePane();goChapter(target);});weighted(sourceRow,source);add(sourceRow,d.icon("trash","Удалить запись",()->deleteNote(editing)),44,44);add(pane,sourceRow,-1,48);d.gap(pane,8);
+        LinearLayout sourceRow=d.row();boolean linked=!paper()&&n.source>=0&&n.source<book.chapters.size();TextView source=d.text(linked?"Источник: "+book.chapters.get(n.source).title:(paper()||pdf())&&n.source>0?"Источник: страница "+n.source:"Источник: вся книга",11,d.silver);source.setMaxLines(2);source.setEllipsize(TextUtils.TruncateAt.END);if(linked&&!archived())source.setOnClickListener(v->{int target=editing.source;closePane();goChapter(target);});if(pdf()&&!archived()&&n.source>0)source.setOnClickListener(v->{int page=n.source;closePane();if(pdfView!=null)pdfView.showPage(page);});weighted(sourceRow,source);add(sourceRow,d.icon("trash","Удалить запись",()->deleteNote(editing)),44,44);add(pane,sourceRow,-1,48);d.gap(pane,8);
         noteBody=d.edit(n.type.equals("hero")?"Что вы знаете об этом герое?":n.type.equals("quote")?"Цитата из книги":n.type.equals("section")?"Описание раздела":"Содержание, выводы, вопросы…",3);noteBody.setId(R.id.note_body);noteBody.setText(n.body);noteBody.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);pane.addView(noteBody,new LinearLayout.LayoutParams(-1,0,1));d.gap(pane,10);
         if(structureType!=null)structureType.addTextChangedListener(watch(this::noteChanged));
         noteTitle.addTextChangedListener(watch(this::noteChanged));noteBody.addTextChangedListener(watch(this::noteChanged));
@@ -321,7 +342,7 @@ public final class MainActivity extends Activity {
         AlertDialog dialog=new AlertDialog.Builder(dialogContext()).setTitle("Добавить пользовательский раздел").setView(box).setPositiveButton("Создать",null).setNegativeButton("Отмена",null).create();dialog.setOnShowListener(v->{dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{String title=name.getText().toString().trim();if(title.isEmpty()){name.setError("Введите название раздела");return;}try{Library.Note section=library.addSection(bookId,title);target.parent=section.id;editing=target;dirty=true;flushNote();dialog.dismiss();hideKeyboard();openEditor(target);}catch(Exception e){fail("Не удалось создать раздел",e);}});name.requestFocus();dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);});dialog.show();
     }
     private void deleteNote(Library.Note n){if(n==null)return;new AlertDialog.Builder(dialogContext()).setTitle("Удалить запись?").setMessage("«"+n.label()+"». Вложенные записи останутся в общих записях.").setPositiveButton("Удалить",(a,b)->{if(editing!=null&&editing.id.equals(n.id)){handler.removeCallbacks(saveNoteJob);dirty=false;editing=null;}library.delete(n);showNoteList();}).setNegativeButton("Отмена",null).show();}
-    private void quote(){if(paper()){createNote("quote","");return;}web.evaluateJavascript("window.getSelection().toString()",value->{try{Object selected=new JSONTokener(value).nextValue();String text=selected instanceof String?(String)selected:"";if(text.trim().isEmpty()){toast("Сначала выделите фрагмент текста долгим нажатием, затем нажмите «Цитата».");return;}createNote("quote",text);}catch(Exception e){toast("Не удалось получить выделенный текст");}});}
+    private void quote(){if(paper()||pdf()){createNote("quote","");return;}web.evaluateJavascript("window.getSelection().toString()",value->{try{Object selected=new JSONTokener(value).nextValue();String text=selected instanceof String?(String)selected:"";if(text.trim().isEmpty()){toast("Сначала выделите фрагмент текста долгим нажатием, затем нажмите «Цитата».");return;}createNote("quote",text);}catch(Exception e){toast("Не удалось получить выделенный текст");}});}
     private void exportBook(String id){
         worker.execute(()->{try{Fb2.Book selected=library.load(id);String text=library.markdown(id,selected);handler.post(()->{if(isFinishing()||isDestroyed())return;exportText=text;prefs.edit().putString("pending_export",exportText).apply();Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/markdown").addCategory(Intent.CATEGORY_OPENABLE);intent.putExtra(Intent.EXTRA_TITLE,selected.title.replaceAll("[\\\\/:*?\"<>|]","_")+" — конспект.md");startActivityForResult(intent,EXPORT);});}catch(Exception e){handler.post(()->fail("Не удалось подготовить конспект",e));}});
     }
@@ -329,6 +350,6 @@ public final class MainActivity extends Activity {
     @Override protected void onPause(){cancelPageTurn();flushNote();if(detailsForm!=null)detailsForm.save();savePosition();super.onPause();}
     @Override protected void onDestroy(){cancelPageTurn();releaseReader();worker.shutdownNow();super.onDestroy();}
     @Override protected void onSaveInstanceState(Bundle state){flushNote();if(detailsForm!=null){detailsForm.save();state.putString("details",detailsForm.book.id);}savePosition();state.putString("cover_book",coverBookId);state.putString("book",bookId!=null?bookId:pendingBookId);state.putBoolean("pane",paneOpen);state.putInt("tab",tab);if(editing!=null)state.putString("editing",editing.id);super.onSaveInstanceState(state);}
-    @Override public void onConfigurationChanged(Configuration config){cancelPageTurn();super.onConfigurationChanged(config);if(pane!=null&&paneOpen){FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)pane.getLayoutParams();lp.width=paneWidth();pane.setLayoutParams(lp);}}
-    @Override public void onBackPressed(){if(paneOpen){closePane();return;}if(bookId!=null&&!loading){showBookDetails(bookId);return;}if(pendingBookId!=null){showBookDetails(pendingBookId);return;}if(detailsForm!=null){showLibrary();return;}if(loading){showLibrary();return;}super.onBackPressed();}
+    @Override public void onConfigurationChanged(Configuration config){cancelPageTurn();super.onConfigurationChanged(config);if(pane!=null&&paneOpen&&!archived()){FrameLayout.LayoutParams lp=(FrameLayout.LayoutParams)pane.getLayoutParams();lp.width=paneWidth();pane.setLayoutParams(lp);}}
+    @Override public void onBackPressed(){if(paneOpen){closePane();return;}if(bookId!=null&&!loading){if(archived())showLibrary();else showBookDetails(bookId);return;}if(pendingBookId!=null){showBookDetails(pendingBookId);return;}if(detailsForm!=null){showLibrary();return;}if(loading){showLibrary();return;}super.onBackPressed();}
 }

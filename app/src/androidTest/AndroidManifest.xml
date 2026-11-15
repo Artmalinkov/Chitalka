@@ -10,4 +10,6 @@
     <instrumentation android:name="ru.devimind.chitalka.checks.CoverSeedChecks" android:targetPackage="ru.devimind.chitalka" />
     <instrumentation android:name="ru.devimind.chitalka.checks.CoverChecks" android:targetPackage="ru.devimind.chitalka" />
     <instrumentation android:name="ru.devimind.chitalka.checks.PaperChecks" android:targetPackage="ru.devimind.chitalka" />
+    <instrumentation android:name="ru.devimind.chitalka.checks.PdfChecks" android:targetPackage="ru.devimind.chitalka" />
+    <instrumentation android:name="ru.devimind.chitalka.checks.DeleteChecks" android:targetPackage="ru.devimind.chitalka" />
 </manifest>

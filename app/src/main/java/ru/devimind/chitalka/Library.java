@@ -15,8 +15,8 @@ import java.time.LocalDate;
 /** Local SQLite notes, positions and book metadata. Original documents are copied, never edited. */
 public final class Library extends SQLiteOpenHelper {
     public static final class BookRow {
-        public String id,title,author,country,genre,started,finished; public String kind; public int page,total; public boolean paper(){return "paper".equals(kind);} public int chapter; public float scroll; public long opened;
-        BookRow(Cursor c){id=c.getString(0);title=c.getString(1);author=c.getString(2);chapter=c.getInt(3);scroll=c.getFloat(4);country=c.getString(5);genre=c.getString(6);started=c.getString(7);finished=c.getString(8);opened=c.getLong(9);kind=c.getString(10);page=c.getInt(11);total=c.getInt(12);}
+        public String id,title,author,country,genre,started,finished; public String kind; public boolean archived; public int page,total; public boolean paper(){return "paper".equals(kind);} public boolean pdf(){return "pdf".equals(kind);} public int chapter; public float scroll; public long opened;
+        BookRow(Cursor c){id=c.getString(0);title=c.getString(1);author=c.getString(2);chapter=c.getInt(3);scroll=c.getFloat(4);country=c.getString(5);genre=c.getString(6);started=c.getString(7);finished=c.getString(8);opened=c.getLong(9);kind=c.getString(10);page=c.getInt(11);total=c.getInt(12);archived=c.getInt(13)!=0;}
         public String label(){return title.trim().isEmpty()?"Без названия":title;}
     }
     public static final class Note {
@@ -26,27 +26,29 @@ public final class Library extends SQLiteOpenHelper {
     }
     private final Context context;
     private final File folder;
-    public Library(Context c){super(c.getApplicationContext(),"library.db",null,3);context=c.getApplicationContext();folder=new File(context.getFilesDir(),"books");folder.mkdirs();}
+    public Library(Context c){super(c.getApplicationContext(),"library.db",null,4);context=c.getApplicationContext();folder=new File(context.getFilesDir(),"books");folder.mkdirs();}
     @Override public void onConfigure(SQLiteDatabase db){db.setForeignKeyConstraintsEnabled(true);}
     @Override public void onCreate(SQLiteDatabase db){
-        db.execSQL("CREATE TABLE books(id TEXT PRIMARY KEY,title TEXT NOT NULL,author TEXT NOT NULL,chapter INTEGER NOT NULL DEFAULT 0,scroll REAL NOT NULL DEFAULT 0,opened INTEGER NOT NULL,country TEXT NOT NULL DEFAULT '',genre TEXT NOT NULL DEFAULT '',started TEXT NOT NULL DEFAULT '',finished TEXT NOT NULL DEFAULT '',kind TEXT NOT NULL DEFAULT 'fb2',page INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE TABLE books(id TEXT PRIMARY KEY,title TEXT NOT NULL,author TEXT NOT NULL,chapter INTEGER NOT NULL DEFAULT 0,scroll REAL NOT NULL DEFAULT 0,opened INTEGER NOT NULL,country TEXT NOT NULL DEFAULT '',genre TEXT NOT NULL DEFAULT '',started TEXT NOT NULL DEFAULT '',finished TEXT NOT NULL DEFAULT '',kind TEXT NOT NULL DEFAULT 'fb2',page INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 0,removed INTEGER NOT NULL DEFAULT 0,source_outline TEXT NOT NULL DEFAULT '')");
         db.execSQL("CREATE TABLE notes(id TEXT PRIMARY KEY,book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,type TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,parent_id TEXT REFERENCES notes(id) ON DELETE SET NULL,source INTEGER NOT NULL DEFAULT -1,position INTEGER NOT NULL,updated INTEGER NOT NULL,structure_type TEXT NOT NULL DEFAULT '')");
         db.execSQL("CREATE INDEX notes_book ON notes(book_id,position)");
     }
     @Override public void onUpgrade(SQLiteDatabase db,int oldV,int newV){
         if(oldV<2&&newV>=2)for(String column:new String[]{"country","genre","started","finished"})db.execSQL("ALTER TABLE books ADD COLUMN "+column+" TEXT NOT NULL DEFAULT ''");
         if(oldV<3&&newV>=3){db.execSQL("ALTER TABLE books ADD COLUMN kind TEXT NOT NULL DEFAULT 'fb2'");db.execSQL("ALTER TABLE books ADD COLUMN page INTEGER NOT NULL DEFAULT 0");db.execSQL("ALTER TABLE books ADD COLUMN total INTEGER NOT NULL DEFAULT 0");db.execSQL("ALTER TABLE notes ADD COLUMN structure_type TEXT NOT NULL DEFAULT ''");}
-        if(oldV>=1&&newV==3)return;
+        if(oldV<4&&newV>=4){db.execSQL("ALTER TABLE books ADD COLUMN removed INTEGER NOT NULL DEFAULT 0");db.execSQL("ALTER TABLE books ADD COLUMN source_outline TEXT NOT NULL DEFAULT ''");}
+        if(oldV>=1&&newV<=4)return;
         throw new IllegalStateException("Unsupported database upgrade; data retained");
     }
-    private static final String BOOK_COLUMNS="id,title,author,chapter,scroll,country,genre,started,finished,opened,kind,page,total";
+    private static final String BOOK_COLUMNS="id,title,author,chapter,scroll,country,genre,started,finished,opened,kind,page,total,removed";
     public List<BookRow> books(){return books("opened",true);}
     public List<BookRow> books(String field,boolean descending){
-        List<BookRow> rows=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT "+BOOK_COLUMNS+" FROM books",null)){while(c.moveToNext())rows.add(new BookRow(c));}
+        List<BookRow> rows=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT "+BOOK_COLUMNS+" FROM books WHERE removed=0",null)){while(c.moveToNext())rows.add(new BookRow(c));}
         Collator collator=Collator.getInstance(new Locale("ru"));collator.setStrength(Collator.SECONDARY);
         rows.sort((a,b)->{int order;if("opened".equals(field))order=Long.compare(a.opened,b.opened);else{String x=sortValue(a,field),y=sortValue(b,field);if(x.isEmpty()!=y.isEmpty())return x.isEmpty()?1:-1;order=collator.compare(x,y);}if(order!=0)return descending?-order:order;order=collator.compare(a.label(),b.label());return order!=0?order:a.id.compareTo(b.id);});return rows;
     }
     private static String sortValue(BookRow row,String field){switch(field){case "author":return row.author;case "country":return row.country;case "genre":return row.genre;case "started":return row.started;case "finished":return row.finished;default:return row.title;}}
+    public List<BookRow> savedNotebooks(){List<BookRow> rows=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT "+BOOK_COLUMNS+" FROM books WHERE removed=1 ORDER BY opened DESC",null)){while(c.moveToNext())rows.add(new BookRow(c));}return rows;}
     public BookRow book(String id){try(Cursor c=getReadableDatabase().rawQuery("SELECT "+BOOK_COLUMNS+" FROM books WHERE id=?",new String[]{id})){return c.moveToFirst()?new BookRow(c):null;}}
     public void saveBook(BookRow book){
         if(!book.started.isEmpty())LocalDate.parse(book.started);if(!book.finished.isEmpty())LocalDate.parse(book.finished);
@@ -56,37 +58,56 @@ public final class Library extends SQLiteOpenHelper {
     }
     public String addPaper(){String id="paper-"+UUID.randomUUID();ContentValues values=new ContentValues();values.put("id",id);values.put("title","Новая бумажная книга");values.put("author","");values.put("kind","paper");values.put("opened",System.currentTimeMillis());getWritableDatabase().insertOrThrow("books",null,values);return id;}
     public void paperProgress(String id,int page,int total){if(page<0||total<0||(total>0&&page>total))throw new IllegalArgumentException("Проверьте номер страницы и общее число страниц");ContentValues values=new ContentValues();values.put("page",page);values.put("total",total);values.put("opened",System.currentTimeMillis());getWritableDatabase().update("books",values,"id=? AND kind='paper'",new String[]{id});}
+    public void pdfPosition(String id,int page,int total){if(page<1||total<1||page>total)throw new IllegalArgumentException("Неверная страница PDF");ContentValues values=new ContentValues();values.put("page",page);values.put("total",total);values.put("opened",System.currentTimeMillis());getWritableDatabase().update("books",values,"id=? AND kind='pdf'",new String[]{id});}
     public void markReadingStarted(String id){ContentValues values=new ContentValues();values.put("started",LocalDate.now().toString());getWritableDatabase().update("books",values,"id=? AND started='' AND finished=''",new String[]{id});}
     public void position(String id,int chapter,float scroll){ContentValues v=new ContentValues();v.put("chapter",chapter);v.put("scroll",scroll);v.put("opened",System.currentTimeMillis());getWritableDatabase().update("books",v,"id=?",new String[]{id});}
     public File file(String id,String extension){return new File(folder,id+extension);}
     public android.graphics.Bitmap cover(String id,int edge)throws Exception{return BookCovers.load(this,id,Math.max(1,edge));}
     public void replaceCover(String id,Uri image)throws Exception{if(book(id)==null)throw new IOException("Книга не найдена");BookCovers.replace(context,file(id,".cover"),image);}
-    public String importBook(Uri uri) throws Exception {
+    public synchronized String importBook(Uri uri) throws Exception {
         File temporary=File.createTempFile("import-",".fb2",folder);
         try {
             MessageDigest digest=MessageDigest.getInstance("SHA-256");long total=0;
             try(InputStream in=context.getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(temporary)){
                 if(in==null)throw new IOException("Не удалось открыть файл");byte[] buffer=new byte[65536];int count;
-                while((count=in.read(buffer))!=-1){total+=count;if(total>64L*1024*1024)throw new IOException("Для первой версии выберите FB2 размером до 64 МБ");digest.update(buffer,0,count);out.write(buffer,0,count);}
+                while((count=in.read(buffer))!=-1){total+=count;if(total>256L*1024*1024)throw new IOException("Выберите файл размером до 256 МБ.");digest.update(buffer,0,count);out.write(buffer,0,count);}
             }
             StringBuilder hex=new StringBuilder();for(byte b:digest.digest())hex.append(String.format(Locale.ROOT,"%02x",b&255));String id=hex.toString();
-            if(book(id)!=null)return id;
+            BookRow existing=book(id);if(existing!=null&&!existing.archived)return id;
+            byte[] signature=new byte[1024];int length;try(InputStream input=new FileInputStream(temporary)){length=input.read(signature);}
+            boolean pdf=length>0&&new String(signature,0,length,java.nio.charset.StandardCharsets.ISO_8859_1).contains("%PDF-");
+            if(pdf){int pages=PdfBook.count(temporary);String name=uri.getLastPathSegment();try(Cursor cursor=context.getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(cursor!=null&&cursor.moveToFirst())name=cursor.getString(0);}catch(Exception ignored){if(uri.getLastPathSegment()!=null)name=uri.getLastPathSegment();}if(name==null||name.trim().isEmpty())name="PDF-книга";name=name.replaceFirst("(?i)\\.pdf$","");File target=file(id,".pdf");if(!temporary.renameTo(target))throw new IOException("Не удалось сохранить PDF");try{ContentValues values=new ContentValues();values.put("id",id);values.put("title",name);values.put("author","");values.put("kind","pdf");values.put("page",1);values.put("total",pages);values.put("opened",System.currentTimeMillis());if(existing==null)getWritableDatabase().insertOrThrow("books",null,values);else{ContentValues restored=new ContentValues();restored.put("removed",0);restored.put("source_outline","");restored.put("total",pages);getWritableDatabase().update("books",restored,"id=?",new String[]{id});}return id;}catch(Exception error){target.delete();throw error;}}
+            if(total>64L*1024*1024)throw new IOException("Выберите FB2 размером до 64 МБ.");
             Fb2.Book parsed;try(InputStream in=new FileInputStream(temporary)){parsed=new Fb2().parse(in);}
             String json=parsed.json().toString();
             android.util.AtomicFile cached=new android.util.AtomicFile(file(id,".json"));FileOutputStream output=cached.startWrite();
             try{output.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));cached.finishWrite(output);}catch(Exception e){cached.failWrite(output);throw e;}
             if(!temporary.renameTo(file(id,".fb2")))throw new IOException("Не удалось сохранить локальную копию книги");
             ContentValues v=new ContentValues();v.put("id",id);v.put("title",parsed.title);v.put("author",parsed.author);v.put("opened",System.currentTimeMillis());
-            getWritableDatabase().insertOrThrow("books",null,v);return id;
+            if(existing==null)getWritableDatabase().insertOrThrow("books",null,v);else{ContentValues restored=new ContentValues();restored.put("removed",0);restored.put("source_outline","");getWritableDatabase().update("books",restored,"id=?",new String[]{id});}return id;
         }finally{temporary.delete();}
     }
     public Fb2.Book load(String id)throws Exception{
-        BookRow row=book(id);if(row!=null&&row.paper()){Fb2.Book paper=new Fb2.Book();paper.title=row.label();paper.author=row.author;return paper;}
+        BookRow row=book(id);if(row!=null&&row.archived){Fb2.Book saved=new Fb2.Book();saved.title=row.label();saved.author=row.author;try(Cursor c=getReadableDatabase().rawQuery("SELECT source_outline FROM books WHERE id=?",new String[]{id})){if(c.moveToFirst()&&!c.getString(0).isEmpty()){JSONArray outline=new JSONArray(c.getString(0));for(int i=0;i<outline.length();i++){JSONObject item=outline.getJSONObject(i);saved.chapters.add(new Fb2.Chapter(item.optString("title"),item.optString("part"),""));}}}return saved;}if(row!=null&&(row.paper()||row.pdf())){Fb2.Book paper=new Fb2.Book();paper.title=row.label();paper.author=row.author;return paper;}
         File cached=file(id,".json");
         Fb2.Book loaded;
         if(cached.isFile()){try(InputStream in=new FileInputStream(cached)){loaded=Fb2.Book.fromJson(read(in));}}
         else try(InputStream in=new FileInputStream(file(id,".fb2"))){loaded=new Fb2().parse(in);}
         BookRow saved=book(id);if(saved!=null){loaded.title=saved.label();loaded.author=saved.author;}return loaded;
+    }
+    /** Keep only notebook metadata and source labels; the imported document is removed. */
+    public synchronized void deleteBook(String id,boolean withNotebook)throws Exception{
+        BookRow row=book(id);if(row==null)return;
+        String outline="";
+        if(!withNotebook&&!row.archived&&!row.paper()&&!row.pdf()){
+            try{Fb2.Book original=load(id);JSONArray titles=new JSONArray();for(Fb2.Chapter c:original.chapters)titles.put(new JSONObject().put("title",c.title).put("part",c.part));outline=titles.toString();}catch(Exception unreadable){android.util.Log.w("Chitalka","Source labels unavailable; retaining notebook",unreadable);}
+        }
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{
+            if(withNotebook)db.delete("books","id=?",new String[]{id});
+            else if(!row.archived){ContentValues values=new ContentValues();values.put("removed",1);values.put("source_outline",outline);db.update("books",values,"id=?",new String[]{id});}
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
+        for(String extension:new String[]{".fb2",".pdf",".json",".json.bak",".json.new",".cover",".cover.bak",".cover.new"}){File local=file(id,extension);if(local.exists()&&!local.delete())throw new IOException("Запись удалена из библиотеки, но не удалось удалить локальный файл. Повторите удаление.");}
     }
     public static String read(InputStream in)throws IOException{ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] b=new byte[8192];int n;while((n=in.read(b))!=-1)out.write(b,0,n);return out.toString("UTF-8");}
     public List<Note> notes(String book){List<Note> r=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT id,book_id,type,title,body,parent_id,source,structure_type FROM notes WHERE book_id=? ORDER BY position",new String[]{book})){while(c.moveToNext())r.add(new Note(c));}return r;}
@@ -116,7 +137,7 @@ public final class Library extends SQLiteOpenHelper {
     private void append(StringBuilder s,Note n,int level,Fb2.Book book){
         for(int i=0;i<level;i++)s.append('#');s.append(' ').append(n.label().replace('\n',' ')).append("\n\n");
         if(n.type.equals("quote")){for(String line:n.body.split("\n",-1))s.append("> ").append(line).append('\n');}else s.append(n.body).append('\n');
-        BookRow row=book(n.book);if(row!=null&&row.paper()&&n.source>0)s.append("\n_Источник: страница ").append(n.source).append("_\n");
+        BookRow row=book(n.book);if(row!=null&&(row.paper()||row.pdf())&&n.source>0)s.append("\n_Источник: страница ").append(n.source).append("_\n");
         else if(n.source>=0&&n.source<book.chapters.size())s.append("\n_Источник: ").append(book.chapters.get(n.source).part).append(" · ").append(book.chapters.get(n.source).title).append("_\n");
         s.append('\n');
     }

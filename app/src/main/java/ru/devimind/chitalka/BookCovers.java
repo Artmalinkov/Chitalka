@@ -29,6 +29,7 @@ final class BookCovers {
             return decode(custom,edge);
         }catch(FileNotFoundException absent){/* Use the original book cover. */}
         catch(IOException corrupt){android.util.Log.e("Chitalka","Custom cover unreadable; using original",corrupt);}
+        Library.BookRow row=library.book(id);if(row!=null&&row.pdf())return PdfBook.cover(library.file(id,".pdf"),edge);
         String data=library.load(id).cover;if(data.isEmpty())return null;
         byte[] bytes=Base64.decode(data.substring(data.indexOf(',')+1),Base64.DEFAULT);BitmapFactory.Options bounds=new BitmapFactory.Options();bounds.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,bounds);
         Bitmap image=BitmapFactory.decodeByteArray(bytes,0,bytes.length,options(bounds.outWidth,bounds.outHeight,edge));if(image==null)throw new IOException("Не удалось прочитать обложку книги");return image;
