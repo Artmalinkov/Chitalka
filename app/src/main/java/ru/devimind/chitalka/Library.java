@@ -24,20 +24,32 @@ public final class Library extends SQLiteOpenHelper {
         Note(Cursor c){id=c.getString(0);book=c.getString(1);type=c.getString(2);title=c.getString(3);body=c.getString(4);parent=c.getString(5);source=c.getInt(6);structureType=c.getString(7);}
         public String label(){return structureType.isEmpty()?(title.trim().isEmpty()?typeLabel(type):title):(structureType+" "+title).trim();}
     }
+    public static final class HeroRelation {
+        public String id,book,heroA,heroB,description;
+        HeroRelation(Cursor c){id=c.getString(0);book=c.getString(1);heroA=c.getString(2);heroB=c.getString(3);description=c.getString(4);}
+        public String other(String hero){if(heroA.equals(hero))return heroB;if(heroB.equals(hero))return heroA;throw new IllegalArgumentException("Герой не участвует в связи");}
+    }
     private final Context context;
     private final File folder;
-    public Library(Context c){super(c.getApplicationContext(),"library.db",null,4);context=c.getApplicationContext();folder=new File(context.getFilesDir(),"books");folder.mkdirs();}
+    public Library(Context c){super(c.getApplicationContext(),"library.db",null,5);context=c.getApplicationContext();folder=new File(context.getFilesDir(),"books");folder.mkdirs();}
     @Override public void onConfigure(SQLiteDatabase db){db.setForeignKeyConstraintsEnabled(true);}
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE books(id TEXT PRIMARY KEY,title TEXT NOT NULL,author TEXT NOT NULL,chapter INTEGER NOT NULL DEFAULT 0,scroll REAL NOT NULL DEFAULT 0,opened INTEGER NOT NULL,country TEXT NOT NULL DEFAULT '',genre TEXT NOT NULL DEFAULT '',started TEXT NOT NULL DEFAULT '',finished TEXT NOT NULL DEFAULT '',kind TEXT NOT NULL DEFAULT 'fb2',page INTEGER NOT NULL DEFAULT 0,total INTEGER NOT NULL DEFAULT 0,removed INTEGER NOT NULL DEFAULT 0,source_outline TEXT NOT NULL DEFAULT '')");
         db.execSQL("CREATE TABLE notes(id TEXT PRIMARY KEY,book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,type TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,parent_id TEXT REFERENCES notes(id) ON DELETE SET NULL,source INTEGER NOT NULL DEFAULT -1,position INTEGER NOT NULL,updated INTEGER NOT NULL,structure_type TEXT NOT NULL DEFAULT '')");
         db.execSQL("CREATE INDEX notes_book ON notes(book_id,position)");
+        createHeroRelations(db);
+    }
+    private static void createHeroRelations(SQLiteDatabase db){
+        db.execSQL("CREATE TABLE hero_relations(id TEXT PRIMARY KEY,book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,hero_a TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,hero_b TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,description TEXT NOT NULL DEFAULT '',updated INTEGER NOT NULL,CHECK(hero_a < hero_b),UNIQUE(book_id,hero_a,hero_b))");
+        db.execSQL("CREATE INDEX hero_relations_b ON hero_relations(hero_b)");
+        db.execSQL("CREATE INDEX hero_relations_a ON hero_relations(hero_a)");
     }
     @Override public void onUpgrade(SQLiteDatabase db,int oldV,int newV){
         if(oldV<2&&newV>=2)for(String column:new String[]{"country","genre","started","finished"})db.execSQL("ALTER TABLE books ADD COLUMN "+column+" TEXT NOT NULL DEFAULT ''");
         if(oldV<3&&newV>=3){db.execSQL("ALTER TABLE books ADD COLUMN kind TEXT NOT NULL DEFAULT 'fb2'");db.execSQL("ALTER TABLE books ADD COLUMN page INTEGER NOT NULL DEFAULT 0");db.execSQL("ALTER TABLE books ADD COLUMN total INTEGER NOT NULL DEFAULT 0");db.execSQL("ALTER TABLE notes ADD COLUMN structure_type TEXT NOT NULL DEFAULT ''");}
         if(oldV<4&&newV>=4){db.execSQL("ALTER TABLE books ADD COLUMN removed INTEGER NOT NULL DEFAULT 0");db.execSQL("ALTER TABLE books ADD COLUMN source_outline TEXT NOT NULL DEFAULT ''");}
-        if(oldV>=1&&newV<=4)return;
+        if(oldV<5&&newV>=5)createHeroRelations(db);
+        if(oldV>=1&&newV<=5)return;
         throw new IllegalStateException("Unsupported database upgrade; data retained");
     }
     private static final String BOOK_COLUMNS="id,title,author,chapter,scroll,country,genre,started,finished,opened,kind,page,total,removed";
@@ -124,10 +136,22 @@ public final class Library extends SQLiteOpenHelper {
     }
     public void save(Note n){ContentValues v=new ContentValues();v.put("structure_type",n.structureType==null?"":n.structureType.trim());v.put("title",n.title);v.put("body",n.body);v.put("parent_id",n.parent);v.put("source",n.source);v.put("updated",System.currentTimeMillis());getWritableDatabase().update("notes",v,"id=?",new String[]{n.id});}
     public void delete(Note n){getWritableDatabase().delete("notes","id=?",new String[]{n.id});}
+    private static final String RELATION_COLUMNS="id,book_id,hero_a,hero_b,description";
+    public List<HeroRelation> heroRelations(String hero){List<HeroRelation> rows=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT "+RELATION_COLUMNS+" FROM hero_relations WHERE hero_a=? OR hero_b=? ORDER BY updated DESC,id",new String[]{hero,hero})){while(c.moveToNext())rows.add(new HeroRelation(c));}return rows;}
+    public List<HeroRelation> bookHeroRelations(String book){List<HeroRelation> rows=new ArrayList<>();try(Cursor c=getReadableDatabase().rawQuery("SELECT "+RELATION_COLUMNS+" FROM hero_relations WHERE book_id=? ORDER BY updated DESC,id",new String[]{book})){while(c.moveToNext())rows.add(new HeroRelation(c));}return rows;}
+    public HeroRelation heroRelation(String id){try(Cursor c=getReadableDatabase().rawQuery("SELECT "+RELATION_COLUMNS+" FROM hero_relations WHERE id=?",new String[]{id})){return c.moveToFirst()?new HeroRelation(c):null;}}
+    public HeroRelation heroRelationBetween(String first,String second){String a=first.compareTo(second)<0?first:second,b=first.compareTo(second)<0?second:first;try(Cursor c=getReadableDatabase().rawQuery("SELECT "+RELATION_COLUMNS+" FROM hero_relations WHERE hero_a=? AND hero_b=?",new String[]{a,b})){return c.moveToFirst()?new HeroRelation(c):null;}}
+    private Note[] relationHeroes(String first,String second){Note a=note(first),b=note(second);if(a==null||b==null||!"hero".equals(a.type)||!"hero".equals(b.type))throw new IllegalArgumentException("Выберите двух существующих героев");if(a.id.equals(b.id))throw new IllegalArgumentException("Нельзя связать героя с самим собой");if(!a.book.equals(b.book))throw new IllegalArgumentException("Связь доступна между героями одной книги");return new Note[]{a,b};}
+    public HeroRelation connectHeroes(String first,String second,String description){
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{Note[] heroes=relationHeroes(first,second);if(heroRelationBetween(first,second)!=null)throw new IllegalArgumentException("Связь между этими героями уже есть");String a=first.compareTo(second)<0?first:second,b=first.compareTo(second)<0?second:first;String id=UUID.randomUUID().toString();ContentValues values=new ContentValues();values.put("id",id);values.put("book_id",heroes[0].book);values.put("hero_a",a);values.put("hero_b",b);values.put("description",description==null?"":description.trim());values.put("updated",System.currentTimeMillis());db.insertOrThrow("hero_relations",null,values);HeroRelation result=heroRelation(id);db.setTransactionSuccessful();return result;}finally{db.endTransaction();}
+    }
+    public void updateHeroRelation(String id,String description){SQLiteDatabase db=getWritableDatabase();db.beginTransaction();try{HeroRelation relation=heroRelation(id);if(relation==null)throw new IllegalArgumentException("Связь уже удалена");relationHeroes(relation.heroA,relation.heroB);ContentValues values=new ContentValues();values.put("description",description==null?"":description.trim());values.put("updated",System.currentTimeMillis());db.update("hero_relations",values,"id=?",new String[]{id});db.setTransactionSuccessful();}finally{db.endTransaction();}}
+    public void deleteHeroRelation(String id){getWritableDatabase().delete("hero_relations","id=?",new String[]{id});}
     public static String typeLabel(String type){switch(type){case "part":return "Часть";case "chapter":return "Глава / эпизод";case "section":return "Раздел";case "hero":return "Герой";case "quote":return "Цитата";default:return "Моя мысль";}}
     public String markdown(String id,Fb2.Book book){
         StringBuilder s=new StringBuilder("# ").append(book.title).append("\n\n").append(book.author).append("\n\n");List<Note> all=notes(id);
         s.append("## Главные герои\n\n");for(Note n:all)if(n.type.equals("hero"))append(s,n,3,book);
+        List<HeroRelation> relations=bookHeroRelations(id);if(!relations.isEmpty()){s.append("## Связи героев\n\n");for(HeroRelation relation:relations){Note a=note(relation.heroA),b=note(relation.heroB);if(a==null||b==null)continue;s.append("### ").append(a.label().replace('\n',' ')).append(" ↔ ").append(b.label().replace('\n',' ')).append("\n\n").append(relation.description).append("\n\n");}}
         s.append("## Конспект\n\n");Set<String> emitted=new HashSet<>();
         for(Note n:all)if(!n.type.equals("hero")&&n.parent==null)tree(s,n,all,3,book,emitted);
         for(Note n:all)if(!n.type.equals("hero")&&!emitted.contains(n.id))tree(s,n,all,3,book,emitted);

@@ -13,4 +13,5 @@
     <instrumentation android:name="ru.devimind.chitalka.checks.PdfChecks" android:targetPackage="ru.devimind.chitalka" />
     <instrumentation android:name="ru.devimind.chitalka.checks.DeleteChecks" android:targetPackage="ru.devimind.chitalka" />
     <instrumentation android:name="ru.devimind.chitalka.checks.FullscreenChecks" android:targetPackage="ru.devimind.chitalka" />
+    <instrumentation android:name="ru.devimind.chitalka.checks.HeroRelationChecks" android:targetPackage="ru.devimind.chitalka" />
 </manifest>

@@ -31,4 +31,6 @@
     <item name="reader_controls" type="id" />
     <item name="pdf_controls" type="id" />
     <item name="pdf_zoom_controls" type="id" />
+    <item name="hero_relations" type="id" />
+    <item name="hero_relation_description" type="id" />
 </resources>
