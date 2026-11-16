@@ -154,7 +154,7 @@ public final class MainActivity extends Activity {
         LinearLayout header=d.row();header.setPadding(d.dp(4),d.dp(4),d.dp(8),d.dp(4));add(header,d.icon("back","О книге",()->showBookDetails(bookId)),44,48);
         LinearLayout labels=d.column();TextView title=d.title(book.title,17);title.setMaxLines(1);title.setEllipsize(TextUtils.TruncateAt.END);labels.addView(title);TextView author=d.text(book.author,11,d.muted);author.setSingleLine(true);labels.addView(author);weighted(header,labels);
         TextView notes=d.button("Конспект",true,this::showPane);notes.setTextSize(12);add(header,notes,92,44);LinearLayout chrome=d.column();add(chrome,header,-1,62);chrome.addView(d.divider());
-        LinearLayout meta=d.row();meta.setPadding(d.dp(20),0,d.dp(16),0);partLabel=d.text("",10,d.muted);partLabel.setLetterSpacing(.09f);partLabel.setSingleLine(true);partLabel.setEllipsize(TextUtils.TruncateAt.END);weighted(meta,partLabel);chapterCount=d.text("",11,d.silver);chapterCount.setPadding(d.dp(8),d.dp(8),0,d.dp(8));chapterCount.setOnClickListener(v->outline());meta.addView(chapterCount);add(chrome,meta,-1,38);
+        LinearLayout meta=d.row();meta.setPadding(d.dp(20),0,d.dp(16),0);meta.setMinimumHeight(d.dp(38));partLabel=d.text("",11,d.muted);partLabel.setPadding(0,d.dp(6),0,d.dp(6));partLabel.setMaxLines(3);partLabel.setEllipsize(TextUtils.TruncateAt.END);weighted(meta,partLabel);chapterCount=d.text("",11,d.silver);chapterCount.setPadding(d.dp(8),d.dp(8),0,d.dp(8));chapterCount.setOnClickListener(v->outline());meta.addView(chapterCount);add(chrome,meta,-1,-2);
         web=new WebView(this);web.setId(R.id.book_body);web.setBackgroundColor(d.bg);web.setOverScrollMode(View.OVER_SCROLL_NEVER);
         if((getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)WebView.setWebContentsDebuggingEnabled(true);
         WebSettings ws=web.getSettings();ws.setJavaScriptEnabled(true);ws.setBlockNetworkLoads(true);ws.setAllowFileAccess(false);ws.setAllowContentAccess(false);ws.setBuiltInZoomControls(false);ws.setDefaultTextEncodingName("UTF-8");
@@ -227,7 +227,7 @@ public final class MainActivity extends Activity {
         @JavascriptInterface public void edge(boolean beginning){handler.post(()->{if(owner==web)toast(beginning?"Это начало книги":"Это конец книги");});}
     }
     private void updateReaderMeta(int page,int pages){
-        if(book==null||partLabel==null)return;Fb2.Chapter c=book.chapters.get(chapter);partLabel.setText(c.part.isEmpty()?"ЧТЕНИЕ":c.part.toUpperCase(new Locale("ru")));
+        if(book==null||partLabel==null)return;Fb2.Chapter c=book.chapters.get(chapter);String part=c.part.trim(),title=c.title.trim();String location=part.isEmpty()?title:title.isEmpty()?part:part+" | "+title;partLabel.setText(location.isEmpty()?"Чтение":location);
         chapterCount.setText(("pages".equals(prefs.getString("reader_mode","scroll"))?"Стр. "+page+" · ":"")+(chapter+1)+" / "+book.chapters.size());
     }
     private boolean link(Uri uri){if("chitalka.invalid".equals(uri.getHost())&&uri.getPath()!=null&&uri.getPath().startsWith("/note/")){String id=uri.getLastPathSegment();String html=book.footnotes.get(id);if(html==null)toast("Примечание не найдено");else{TextView text=d.text("",18,d.text);text.setPadding(d.dp(22),d.dp(14),d.dp(22),d.dp(16));text.setText(android.text.Html.fromHtml(html,android.text.Html.FROM_HTML_MODE_LEGACY));text.setTextIsSelectable(true);ScrollView scroll=new ScrollView(this);scroll.addView(text);new AlertDialog.Builder(dialogContext()).setTitle("Примечание").setView(scroll).setPositiveButton("К чтению",null).show();}}else toast("Внешние ссылки пока не открываются");return true;}
@@ -279,7 +279,7 @@ public final class MainActivity extends Activity {
     private void settings(){
         String[] options={"Перелистывание страниц","Анимация перелистывания","Размер текста","Тема приложения","Цитаты","Экспорт конспекта · Markdown","О приложении"};
         new AlertDialog.Builder(dialogContext()).setTitle("Настройки").setItems(options,(dialog,which)->{
-            if(which==0)readingModeDialog();else if(which==1)animationDialog();else if(which==2)fontDialog();else if(which==3)themeDialog();else if(which==4)chooseBookAction(false);else if(which==5)chooseBookAction(true);else new AlertDialog.Builder(dialogContext()).setTitle("Читалка · 0.1.9").setMessage("FB2, PDF и бумажные книги, карточки с обложками, конспекты, герои, цитаты, мысли и разделы. Книгу можно удалить отдельно от конспекта. Книги и записи хранятся на этом устройстве.").setPositiveButton("Понятно",null).show();
+            if(which==0)readingModeDialog();else if(which==1)animationDialog();else if(which==2)fontDialog();else if(which==3)themeDialog();else if(which==4)chooseBookAction(false);else if(which==5)chooseBookAction(true);else new AlertDialog.Builder(dialogContext()).setTitle("Читалка · 0.1.10").setMessage("FB2, PDF и бумажные книги, карточки с обложками, конспекты, герои, цитаты, мысли и разделы. Книгу можно удалить отдельно от конспекта. Книги и записи хранятся на этом устройстве.").setPositiveButton("Понятно",null).show();
         }).show();
     }
     private void readingModeDialog(){
